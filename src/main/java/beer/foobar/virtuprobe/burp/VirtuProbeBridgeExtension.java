@@ -1,5 +1,8 @@
 package beer.foobar.virtuprobe.burp;
 
+import beer.foobar.virtuprobe.burp.client.VirtuProbeClient;
+import beer.foobar.virtuprobe.burp.config.ConfigStore;
+import beer.foobar.virtuprobe.burp.menu.SendToVirtuProbeMenu;
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
 
@@ -26,9 +29,15 @@ public class VirtuProbeBridgeExtension implements BurpExtension {
     @Override
     public void initialize(MontoyaApi api) {
         api.extension().setName("VirtuProbe Bridge");
-        api.logging().logToOutput(
-                "VirtuProbe Bridge loaded. Set the VirtuProbe host, port and token in the "
-                        + "VirtuProbe tab, then use the right click menu to send requests.");
-        // TODO(slice 1): register the config tab, context menu and command poller here.
+
+        final ConfigStore configStore = new ConfigStore(api.persistence().preferences());
+        final VirtuProbeClient client = new VirtuProbeClient();
+        api.userInterface().registerContextMenuItemsProvider(
+                new SendToVirtuProbeMenu(api, configStore, client));
+
+        api.logging().logToOutput("VirtuProbe Bridge loaded. Right click a request and choose Send "
+                + "to VirtuProbe. Default target is http://127.0.0.1:10100.");
+        // Still to come: a settings tab (host, port, token), bulk send, and a poller for the
+        // VirtuProbe to Burp direction (Send to Repeater).
     }
 }
