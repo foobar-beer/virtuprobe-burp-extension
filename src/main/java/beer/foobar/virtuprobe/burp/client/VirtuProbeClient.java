@@ -48,6 +48,46 @@ public class VirtuProbeClient {
         }
     }
 
+    /** The outcome of a bridge check: whether the address answers, whether the bridge API is there, and whether it is enabled. */
+    public record BridgeStatus(boolean reachable, boolean bridgePresent, boolean enabled, String message) {
+    }
+
+    /**
+     * Checks the configured address against the bridge itself, not just the health endpoint.
+     *
+     * <p>{@code /burp/settings} is reachable whether or not the bridge is enabled, so a 200 confirms
+     * both that the address serves the bridge API and whether the toggle is on. A 404 means the
+     * address answered but does not serve {@code /burp} (pointing at the UI server rather than the
+     * execution server is the usual cause). This is more useful than a plain health check, which a
+     * front door with no bridge would still pass.
+     */
+    public BridgeStatus checkBridge(BridgeConfig config) {
+        final String where = config.host() + ":" + config.port();
+        try {
+            final HttpResponse<String> response = http.send(
+                    get(config, "/burp/settings"), HttpResponse.BodyHandlers.ofString());
+            final int code = response.statusCode();
+            if (code == 200) {
+                final boolean enabled = mapper.readTree(response.body()).path("enabled").asBoolean(false);
+                return new BridgeStatus(true, true, enabled, enabled
+                        ? "Connected. The Burp bridge is enabled."
+                        : "Connected, but the Burp bridge is off. Enable it in VirtuProbe Settings.");
+            }
+            if (code == 401) {
+                return new BridgeStatus(true, true, false,
+                        "The bridge requires a token. Set the API token from VirtuProbe Settings.");
+            }
+            if (code == 404) {
+                return new BridgeStatus(true, false, false,
+                        "Reached a server at " + where + ", but it does not serve the bridge API. "
+                                + "Point at the VirtuProbe execution server port.");
+            }
+            return new BridgeStatus(true, false, false, "VirtuProbe answered HTTP " + code + " at " + config.baseUrl() + ".");
+        } catch (Exception e) {
+            return new BridgeStatus(false, false, false, "Could not reach VirtuProbe at " + config.baseUrl() + ".");
+        }
+    }
+
     private String post(BridgeConfig config, String path, Object body) throws Exception {
         final byte[] json = mapper.writeValueAsBytes(body);
         final HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(config.baseUrl() + path))
