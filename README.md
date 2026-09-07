@@ -36,12 +36,12 @@ Two directions, over VirtuProbe's local API:
 mvn -q package
 ```
 
-The extension jar is written to `target/virtuprobe-burp-plugin.jar`.
+The extension jar is written to `target/virtuprobe-bridge-<version>.jar`.
 
 ## Install
 
 In Burp: **Extensions -> Installed -> Add**, extension type **Java**, then select
-`target/virtuprobe-burp-plugin.jar`.
+`target/virtuprobe-bridge-<version>.jar`.
 
 ## Configure
 
