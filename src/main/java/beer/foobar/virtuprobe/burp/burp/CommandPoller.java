@@ -31,7 +31,7 @@ public class CommandPoller {
     private static final int WAIT_SECONDS = 25;
 
     /** Backoff after a failed poll, so an unreachable VirtuProbe is not hammered. */
-    private static final long RETRY_DELAY_MS = 10_000;
+    private static final long DEFAULT_RETRY_DELAY_MS = 10_000;
 
     /** What the settings panel reports, so a silent poller can be told apart from a stopped one. */
     public enum State {
@@ -56,17 +56,31 @@ public class CommandPoller {
     private final Logging logging;
     private final Consumer<State> onStateChange;
 
+    private final int waitSeconds;
+    private final long retryDelayMs;
     private final AtomicBoolean running = new AtomicBoolean();
     private volatile State state = State.STOPPED;
     private volatile Thread thread;
 
     public CommandPoller(VirtuProbeClient client, ConfigStore configStore, CommandApplier applier,
                          Logging logging, Consumer<State> onStateChange) {
+        this(client, configStore, applier, logging, onStateChange, WAIT_SECONDS, DEFAULT_RETRY_DELAY_MS);
+    }
+
+    /**
+     * Timing seam for tests. A test that had to sit out the real ten second backoff would either be
+     * slow or would assert a shorter wait than the code uses, and the second kind passes by measuring
+     * the test rather than the poller.
+     */
+    CommandPoller(VirtuProbeClient client, ConfigStore configStore, CommandApplier applier,
+                  Logging logging, Consumer<State> onStateChange, int waitSeconds, long retryDelayMs) {
         this.client = client;
         this.configStore = configStore;
         this.applier = applier;
         this.logging = logging;
         this.onStateChange = onStateChange;
+        this.waitSeconds = waitSeconds;
+        this.retryDelayMs = retryDelayMs;
     }
 
     public State state() {
@@ -110,7 +124,7 @@ public class CommandPoller {
         while (running.get()) {
             final BridgeConfig config = configStore.load();
             try {
-                final List<BridgeCommand> commands = client.pollCommands(config, WAIT_SECONDS);
+                final List<BridgeCommand> commands = client.pollCommands(config, waitSeconds);
                 if (!running.get()) {
                     return;
                 }
@@ -129,7 +143,7 @@ public class CommandPoller {
                 // normal case, and a line every ten seconds would bury everything else in the log.
                 if (state != State.UNREACHABLE) {
                     logging.logToOutput("VirtuProbe is not answering the Burp bridge. Retrying every "
-                            + (RETRY_DELAY_MS / 1000) + "s. (" + e.getMessage() + ")");
+                            + (retryDelayMs / 1000) + "s. (" + e.getMessage() + ")");
                 }
                 setState(State.UNREACHABLE);
                 if (!sleepBeforeRetry()) {
@@ -142,7 +156,7 @@ public class CommandPoller {
     /** @return false when interrupted, so the caller stops instead of looping. */
     private boolean sleepBeforeRetry() {
         try {
-            Thread.sleep(RETRY_DELAY_MS);
+            Thread.sleep(retryDelayMs);
             return true;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
