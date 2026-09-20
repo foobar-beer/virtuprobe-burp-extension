@@ -1,5 +1,6 @@
 package beer.foobar.virtuprobe.burp.ui;
 
+import beer.foobar.virtuprobe.burp.burp.CommandPoller;
 import beer.foobar.virtuprobe.burp.client.VirtuProbeClient;
 import beer.foobar.virtuprobe.burp.config.BridgeConfig;
 import beer.foobar.virtuprobe.burp.config.ConfigStore;
@@ -9,6 +10,7 @@ import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JSeparator;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
@@ -24,6 +26,11 @@ import java.awt.Insets;
  * A separated deployment, or one that moved the port, sets the host and port. Test connection checks
  * the bridge API rather than a plain health endpoint, so it reports whether the address serves the
  * bridge and whether the bridge is switched on.
+ *
+ * <p><b>The poller's state is shown, not just its switch.</b> Send to Burp fails by silence: before
+ * the poller existed the command was queued, expired unread, and neither end said anything. So the
+ * panel distinguishes listening from stopped from cannot-reach, because those three look identical
+ * from the outside and only one of them is a problem.
  */
 public class BridgeSettingsPanel extends JPanel {
 
@@ -39,12 +46,49 @@ public class BridgeSettingsPanel extends JPanel {
     private final JCheckBox tlsBox = new JCheckBox("Use HTTPS");
     private final JTextField tokenField = new JTextField(28);
     private final JLabel statusLabel = new JLabel(" ");
+    private final JCheckBox pollBox = new JCheckBox("Listen for Send to Burp from VirtuProbe");
+    private final JLabel pollStatusLabel = new JLabel(" ");
+
+    /** Set after construction: the panel is built before the poller so it can be the poller's listener. */
+    private CommandPoller poller;
 
     public BridgeSettingsPanel(ConfigStore configStore, VirtuProbeClient client) {
         this.configStore = configStore;
         this.client = client;
         buildLayout();
         loadFromConfig();
+    }
+
+    /** Wires the poller in and reflects its state. Called once, from the extension entry point. */
+    public void attachPoller(CommandPoller poller) {
+        this.poller = poller;
+        pollBox.setSelected(configStore.isPollEnabled());
+        pollBox.addActionListener(e -> togglePolling());
+        showPollState(poller.state());
+    }
+
+    /** Safe to call from the poller's own thread: hops to the event thread before touching Swing. */
+    public void showPollState(CommandPoller.State state) {
+        SwingUtilities.invokeLater(() -> {
+            pollStatusLabel.setText(state.message());
+            pollStatusLabel.setForeground(switch (state) {
+                case POLLING -> OK;
+                case UNREACHABLE -> WARN;
+                case STOPPED -> ERROR;
+            });
+        });
+    }
+
+    private void togglePolling() {
+        configStore.setPollEnabled(pollBox.isSelected());
+        if (poller == null) {
+            return;
+        }
+        if (pollBox.isSelected()) {
+            poller.start();
+        } else {
+            poller.stop();
+        }
     }
 
     private void buildLayout() {
@@ -78,8 +122,19 @@ public class BridgeSettingsPanel extends JPanel {
         save.setMargin(new Insets(4, 12, 4, 12));
         form.add(buttons, c);
 
-        c.gridx = 1; c.gridy = row; c.gridwidth = 2;
+        c.gridx = 1; c.gridy = row++; c.gridwidth = 2;
         form.add(statusLabel, c);
+
+        c.gridx = 0; c.gridy = row++; c.gridwidth = 3;
+        form.add(new JSeparator(), c);
+
+        c.gridx = 1; c.gridy = row++; c.gridwidth = 2;
+        form.add(pollBox, c);
+        pollBox.setToolTipText("VirtuProbe queues a request when you choose Send to Burp. "
+                + "With this off, nothing collects it.");
+
+        c.gridx = 1; c.gridy = row; c.gridwidth = 2;
+        form.add(pollStatusLabel, c);
 
         add(form, BorderLayout.NORTH);
     }
